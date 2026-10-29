@@ -14,7 +14,8 @@ class FrankaLiberoPrivilegedApi(ApiBase):
     """Robot control helpers for Franka.
     """
 
-    _TCP_OFFSET = np.array([0.0, 0.0, -0.1], dtype=np.float64)
+    # Convert the LIBERO grasp TCP to the panda_hand target used by IK.
+    _TCP_OFFSET = np.array([0.0, 0.0, -0.097], dtype=np.float64)
 
     def __init__(self, env: BaseEnv) -> None:
         super().__init__(env)
@@ -56,7 +57,7 @@ class FrankaLiberoPrivilegedApi(ApiBase):
                 - ["robot0_eye_in_hand"]["images"]["depth"]: Current wrist camera depth image as a numpy array of shape (H, W), dtype float32.
                 - ["robot0_eye_in_hand"]["intrinsics"]: Wrist camera intrinsic matrix as a numpy array of shape (3, 3), dtype float64.
                 - ["robot0_eye_in_hand"]["pose_mat"]: Wrist camera extrinsic matrix as a numpy array of shape (4, 4), dtype float64.
-                - ["robot_cartesian_pos"]: Current end-effector (panda_hand) pose in the robot/world frame as a numpy array of shape (8,), dtype float64. The first 3 elements are the robot's end-effector XYZ, the next 4 elements are the quaternion wxyz, and the last element is the gripper position normalized, 0 (closed) to 1 (open).
+                - ["robot_cartesian_pos"]: Current grasp TCP pose in the robot base frame as a numpy array of shape (8,), dtype float64. XYZ is the gripper0_grip_site position; wxyz uses the panda_hand axes. This is the same pose convention accepted by goto_pose. The last element is the gripper position normalized, 0 (closed) to 1 (open).
                 - ["robot_joint_pos"]: Current joint positions as a numpy array of shape (7,), dtype float64. The last element is the gripper position normalized, 0 (closed) to 1 (open).
         """
         obs = self._env.get_observation()
@@ -116,7 +117,7 @@ class FrankaLiberoPrivilegedApi(ApiBase):
 
         pos = np.asarray(position, dtype=np.float64).reshape(3)
         quat_wxyz = np.asarray(quaternion_wxyz, dtype=np.float64).reshape(4)
-        # Align with legacy env: apply TCP offset in end-effector frame
+        # Convert the requested grasp TCP to panda_hand in the robot base frame.
         quat_xyzw = np.array(
             [quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]], dtype=np.float64
         )
@@ -182,7 +183,7 @@ class FrankaLiberoPrivilegedApi(ApiBase):
 
         pos = np.asarray(position, dtype=np.float64).reshape(3)
         quat_wxyz = np.asarray(quaternion_wxyz, dtype=np.float64).reshape(4)
-        # Align with legacy env: apply TCP offset in end-effector frame
+        # Convert the requested grasp TCP to panda_hand in the robot base frame.
         quat_xyzw = np.array(
             [quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]], dtype=np.float64
         )

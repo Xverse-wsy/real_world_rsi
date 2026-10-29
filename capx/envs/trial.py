@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from capx.envs.launch import LaunchArgs
 
 
-MULTITURN_LIMIT = 10
+MULTITURN_LIMIT = 20
 
 # ---------------------------------------------------------------------------
 # Shared formatting helpers

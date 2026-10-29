@@ -52,7 +52,8 @@ from sklearn.cluster import DBSCAN
 class FrankaLiberoApiReduced(ApiBase):
     """Robot control helpers for Franka.
     """
-    _TCP_OFFSET = np.array([0.0, 0.0, -0.1], dtype=np.float64)
+    # Convert the LIBERO grasp TCP to the panda_hand target used by IK.
+    _TCP_OFFSET = np.array([0.0, 0.0, -0.097], dtype=np.float64)
 
     def __init__(self, env: BaseEnv) -> None:
         super().__init__(env)
@@ -124,7 +125,7 @@ class FrankaLiberoApiReduced(ApiBase):
                 - ["robot0_eye_in_hand"]["images"]["depth"]: Current wrist camera depth image as a numpy array of shape (H, W), dtype float32.
                 - ["robot0_eye_in_hand"]["intrinsics"]: Wrist camera intrinsic matrix as a numpy array of shape (3, 3), dtype float64.
                 - ["robot0_eye_in_hand"]["pose_mat"]: Wrist camera extrinsic matrix as a numpy array of shape (4, 4), dtype float64.
-                - ["robot_cartesian_pos"]: Current end-effector (panda_hand) pose in the robot/world frame as a numpy array of shape (8,), dtype float64. The first 3 elements are the robot's end-effector XYZ, the next 4 elements are the quaternion wxyz, and the last element is the gripper position normalized, 0 (closed) to 1 (open).
+                - ["robot_cartesian_pos"]: Current grasp TCP pose in the robot base frame as a numpy array of shape (8,), dtype float64. XYZ is the gripper0_grip_site position; wxyz uses the panda_hand axes. This is the same pose convention accepted by goto_pose. The last element is the gripper position normalized, 0 (closed) to 1 (open).
                 - ["robot_joint_pos"]: Current joint positions as a numpy array of shape (7,), dtype float64. The last element is the gripper position normalized, 0 (closed) to 1 (open).
         """
         obs = self._env.get_observation()
@@ -345,10 +346,10 @@ class FrankaLiberoApiReduced(ApiBase):
 
         Args:
             position:
-                Target position in world frame.
+                Target position in robot base frame.
                 Shape: (3,), dtype float64.
             quaternion_wxyz:
-                Target orientation as a unit quaternion in world frame.
+                Target orientation as a unit quaternion in robot base frame.
                 Shape: (4,), [w, x, y, z], dtype float64.
 
         Returns:
@@ -445,8 +446,8 @@ class FrankaLiberoApiReduced(ApiBase):
         then moves to the final position.
 
         Args:
-            position: (3,) XYZ target in meters (world frame).
-            quaternion_wxyz: (4,) WXYZ unit quaternion (world frame).
+            position: (3,) XYZ target in meters (robot base frame).
+            quaternion_wxyz: (4,) WXYZ unit quaternion (robot base frame).
             z_approach: Z offset for approach motion (meters). Default 0.0.
 
         Example:
@@ -509,10 +510,10 @@ class FrankaLiberoApiReduced(ApiBase):
         self, grasp_poses_world: np.ndarray, grasp_scores: np.ndarray, top_k: int = 15
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Parses grasp poses from the world frame into a format compatible with CuRobo.
+        Parses grasp poses from the robot base frame into a format compatible with CuRobo.
 
         Args:
-            grasp_poses_world: (N, 4, 4) array of grasp poses in world frame
+            grasp_poses_world: (N, 4, 4) array of grasp poses in robot base frame
             grasp_scores: (N,) array of grasp scores
             top_k: number of top grasp poses to return. Default is 15.
         Returns:
@@ -666,7 +667,7 @@ class FrankaLiberoApiReduced(ApiBase):
         Args:
             object_name: Name of the object (used for mask and grasps if not provided).
             object_mask: precomputed mask (H, W) of the object.
-            grasp_poses: list of (position (3,), quaternion_wxyz (4,)) in world frame.
+            grasp_poses: list of (position (3,), quaternion_wxyz (4,)) in robot base frame.
             top_k_grasps: Number of top grasps to try (by score). Default 15.
             use_world_collision: If True, use world for collision (scene only; object ignored for grasp). Default is True.
             robot_distance_threshold: Passed when building world. Default is 0.15.
@@ -850,7 +851,7 @@ class FrankaLiberoApiReduced(ApiBase):
         is planned to the target pose.
 
         Args:
-            target_pose: (position (3,), quaternion_wxyz (4,)) target pose in world frame (e.g. basket).
+            target_pose: (position (3,), quaternion_wxyz (4,)) target pose in robot base frame (e.g. basket).
             object_name: Name of the object to attach (used for world mesh name: spaces → underscores).
             object_pose: Optional (position, quat_wxyz) of object; unused for now, for API consistency. Default is None.
             object_mask: If provided, rebuild world from current observation with this mask before planning. Default is None.

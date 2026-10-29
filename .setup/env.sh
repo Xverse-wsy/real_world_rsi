@@ -1,0 +1,14 @@
+export PATH="$HOME/.local/bin:$PATH"
+export HF_ENDPOINT=https://hf-mirror.com
+export HF_HOME=/home/wenchaoxu/wsy/vla-recovery-posttrain-loop/cap-x/.cache/huggingface
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export MUJOCO_GL=egl
+export CUDA_VISIBLE_DEVICES=4
+export MUJOCO_EGL_DEVICE_ID=4
+export LIBERO_CONFIG_PATH=/home/wenchaoxu/wsy/vla-recovery-posttrain-loop/cap-x/.setup/libero
+export UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+export UV_HTTP_TIMEOUT=120
+export UV_HTTP_RETRIES=5
+export UV_CONCURRENT_DOWNLOADS=8
+export PATH=/home/wenchaoxu/wsy/vla-recovery-posttrain-loop/cap-x/.setup/node22/bin:$PATH

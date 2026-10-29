@@ -210,7 +210,7 @@ class FrankaLiberoEnv(BaseEnv):
     # ----------------------- FrankaControlApi Interface -----------------------
 
     def move_to_joints_blocking(
-        self, joints: np.ndarray, *, tolerance: float = 0.01, max_steps: int = 120
+        self, joints: np.ndarray, *, tolerance: float = 0.01, max_steps: int = 200
     ) -> None:
         """Move to target joint positions using LIBERO's controller.
 
@@ -492,12 +492,14 @@ class FrankaLiberoEnv(BaseEnv):
                     camera_name + "_segmentation_" + self.segmentation_level
                 ][::-1]
 
-        gripper_robot_base = (
+        # gripper0_eef is already the grasp TCP (97 mm along panda_hand's Z).
+        # Keep its position; rotate only to the panda_hand orientation used by IK.
+        tcp_robot_base = (
             vtf.SE3(wxyz_xyz=self.base_link_wxyz_xyz).inverse()
             @ vtf.SE3(wxyz_xyz=self.gripper_link_wxyz_xyz)
             @ vtf.SE3.from_rotation_and_translation(
                 rotation=vtf.SO3.from_rpy_radians(0.0, 0.0, np.pi / 2.0),
-                translation=np.array([0, 0, -0.107]),
+                translation=np.zeros(3),
             )
         )
         obs["robot_joint_pos"] = np.concatenate(
@@ -508,8 +510,8 @@ class FrankaLiberoEnv(BaseEnv):
         )
         obs["robot_cartesian_pos"] = np.concatenate(
             [
-                gripper_robot_base.translation(),
-                gripper_robot_base.rotation().wxyz,
+                tcp_robot_base.translation(),
+                tcp_robot_base.rotation().wxyz,
                 [self._current_obs["robot0_gripper_qpos"][0] / self.gripper_metric_length],
             ]
         )

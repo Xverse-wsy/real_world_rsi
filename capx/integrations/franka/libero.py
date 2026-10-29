@@ -1,3 +1,4 @@
+import os
 import pathlib
 import time
 from typing import Any
@@ -41,7 +42,8 @@ class FrankaLiberoApi(ApiBase):
     """Robot control helpers for Franka.
     """
 
-    _TCP_OFFSET = np.array([0.0, 0.0, -0.1], dtype=np.float64)
+    # Convert the LIBERO grasp TCP to the panda_hand target used by IK.
+    _TCP_OFFSET = np.array([0.0, 0.0, -0.097], dtype=np.float64)
     
     def __init__(self, env: BaseEnv, use_sam3: bool = True) -> None:
         super().__init__(env)
@@ -61,10 +63,23 @@ class FrankaLiberoApi(ApiBase):
             self.sam3_point_prompt_fn = init_sam3_point_prompt()
         else:
             self.sam2_point_prompt_fn = init_sam2_point_prompt()
-        self.molmo_point_fn = init_molmo()
+        if self.use_sam3 and os.environ.get("CAPX_LIBERO_SAM3_TEXT_ONLY") == "1":
+            # No local Molmo server is needed: existing callers fall back to SAM3 text prompts.
+            self.molmo_point_fn = lambda image, objects=None: {
+                name: (None, None) for name in (objects or [])
+            }
+        else:
+            self.molmo_point_fn = init_molmo()
         self.grasp_net_plan_fn = init_contact_graspnet()
         # used for multiview grasps
-        self.grasp_net_plan_point_clouds_fn = init_contact_graspnet_point_clouds()
+        self.grasp_backend = os.environ.get("CAPX_GRASP_BACKEND", "contact_graspnet")
+        if self.grasp_backend == "graspgen":
+            from capx.integrations.vision.graspgen import init_graspgen_point_clouds
+            self.grasp_net_plan_point_clouds_fn = init_graspgen_point_clouds()
+        elif self.grasp_backend == "contact_graspnet":
+            self.grasp_net_plan_point_clouds_fn = init_contact_graspnet_point_clouds()
+        else:
+            raise ValueError(f"Unknown CAPX_GRASP_BACKEND: {self.grasp_backend}")
         self.ik_solve_fn = init_pyroki()
         self.camera_name = "agentview"
         self.wrist_camera_name = "robot0_eye_in_hand"
@@ -104,7 +119,7 @@ class FrankaLiberoApi(ApiBase):
                 - ["robot0_eye_in_hand"]["images"]["depth"]: Current wrist camera depth image as a numpy array of shape (H, W), dtype float32.
                 - ["robot0_eye_in_hand"]["intrinsics"]: Wrist camera intrinsic matrix as a numpy array of shape (3, 3), dtype float64.
                 - ["robot0_eye_in_hand"]["pose_mat"]: Wrist camera extrinsic matrix as a numpy array of shape (4, 4), dtype float64.
-                - ["robot_cartesian_pos"]: Current end-effector (panda_hand) pose in the robot/world frame as a numpy array of shape (8,), dtype float64. The first 3 elements are the robot's end-effector XYZ, the next 4 elements are the quaternion wxyz, and the last element is the gripper position normalized, 0 (closed) to 1 (open).
+                - ["robot_cartesian_pos"]: Current grasp TCP pose in the robot base frame as a numpy array of shape (8,), dtype float64. XYZ is the gripper0_grip_site position; wxyz uses the panda_hand axes. This is the same pose convention accepted by goto_pose. The last element is the gripper position normalized, 0 (closed) to 1 (open).
                 - ["robot_joint_pos"]: Current joint positions as a numpy array of shape (7,), dtype float64. The last element is the gripper position normalized, 0 (closed) to 1 (open).
         """
         obs = self._env.get_observation()
@@ -216,6 +231,10 @@ class FrankaLiberoApi(ApiBase):
         self, position: np.ndarray, quaternion_wxyz: np.ndarray, z_approach: float = 0.0
     ) -> None:
         """Go to pose using Inverse Kinematics.
+        Position is the desired grasp TCP in the robot base frame, matching
+        get_observation()["robot_cartesian_pos"][:3]. The API accounts for the
+        hand-to-TCP offset internally; do not add finger length to a sampled
+        grasp position or a final contact point. Use z_approach for clearance.
         There is no need to call a second goto_pose with the same position and quaternion_wxyz after calling it with z_approach.
         Args:
             position: (3,) XYZ in meters.
@@ -227,7 +246,7 @@ class FrankaLiberoApi(ApiBase):
 
         pos = np.asarray(position, dtype=np.float64).reshape(3)
         quat_wxyz = np.asarray(quaternion_wxyz, dtype=np.float64).reshape(4)
-        # Align with legacy env: apply TCP offset in end-effector frame
+        # Convert the requested grasp TCP to panda_hand in the robot base frame.
         quat_xyzw = np.array(
             [quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]], dtype=np.float64
         )
@@ -309,8 +328,8 @@ class FrankaLiberoApi(ApiBase):
             use_multiview: If True, uses the wrist camera as well as the main camera for segmentation. If False, only uses the main camera for segmentation.
 
         Returns:
-            position: (3,) XYZ in meters (world frame).
-            quaternion_wxyz: (4,) WXYZ unit quaternion (world frame).
+            position: (3,) XYZ in meters (robot base frame).
+            quaternion_wxyz: (4,) WXYZ unit quaternion (robot base frame).
         """
         start_time = time.time()
 
@@ -351,8 +370,8 @@ class FrankaLiberoApi(ApiBase):
             use_multiview: If True, uses the wrist camera as well as the main camera for segmentation. If False, only uses the main camera for segmentation.
 
         Returns:
-            position: (3,) XYZ in meters (world frame).
-            quaternion_wxyz: (4,) WXYZ unit quaternion (world frame).
+            position: (3,) XYZ in meters (robot base frame).
+            quaternion_wxyz: (4,) WXYZ unit quaternion (robot base frame).
         """
         start_time = time.time()
 
@@ -364,7 +383,7 @@ class FrankaLiberoApi(ApiBase):
         if len(pc_segment) == 0:
             raise ValueError(f"Could not segment object '{object_name}'")
 
-        # Build full scene point cloud in world frame from both cameras
+        # Build full scene point cloud in robot base frame from both cameras
         obs = self.get_observation()
         pc_full_parts = []
         for cam_name in [self.camera_name, self.wrist_camera_name]:
@@ -389,6 +408,8 @@ class FrankaLiberoApi(ApiBase):
         grasp_sample_tf, grasp_scores = self.plan_grasp_from_point_clouds(pc_full, pc_segment)
 
         best_idx = grasp_scores.argmax()
+        if self.grasp_backend == "graspgen":
+            best_idx = self._select_reachable_grasp(grasp_sample_tf, grasp_scores)
         best_grasp = vtf.SE3.from_matrix(grasp_sample_tf[best_idx])
         best_grasp = best_grasp @ vtf.SE3.from_rotation(
             rotation=vtf.SO3.from_rpy_radians(0.0, 0.0, np.pi / 2)
@@ -398,6 +419,41 @@ class FrankaLiberoApi(ApiBase):
         print(f"Grasp sample position for {object_name}: {best_grasp.wxyz_xyz[-3:]}")
         print(f"Grasp sample quaternion wxyz for {object_name}: {best_grasp.wxyz_xyz[:4]}")
         return best_grasp.wxyz_xyz[-3:], best_grasp.wxyz_xyz[:4]
+
+    def _select_reachable_grasp(self, poses: np.ndarray, scores: np.ndarray) -> int:
+        """Check IK residuals at the grasp and a 10 cm pre-grasp without moving.
+
+        This checks kinematic reachability only. It does not certify collision
+        freedom of the robot arm or its approach trajectory.
+        """
+        import jax.numpy as jnp
+        link_idx = self._robot.links.names.index(self._target_link_name)
+        axis_rotation = np.array([[0., -1., 0.], [1., 0., 0.], [0., 0., 1.]])
+        for idx in np.argsort(-scores)[:10]:
+            rotation = SciRotation.from_matrix(poses[idx, :3, :3] @ axis_rotation)
+            xyzw = rotation.as_quat()
+            wxyz = xyzw[[3, 0, 1, 2]]
+            hand_position = poses[idx, :3, 3] + rotation.apply(self._TCP_OFFSET)
+            reachable = True
+            for target in (hand_position - rotation.apply([0., 0., 0.1]), hand_position):
+                cfg = self._pks.solve_ik(
+                    robot=self._robot, target_link_name=self._target_link_name,
+                    target_position=target, target_wxyz=wxyz,
+                )
+                if not np.isfinite(cfg).all():
+                    reachable = False
+                    break
+                actual = np.asarray(self._robot.forward_kinematics(jnp.asarray(cfg)))[link_idx]
+                actual_rotation = SciRotation.from_quat(actual[[1, 2, 3, 0]])
+                pos_error = np.linalg.norm(actual[4:] - target)
+                rot_error = (actual_rotation.inv() * rotation).magnitude()
+                if pos_error > 0.01 or rot_error > 0.15:
+                    reachable = False
+                    break
+            if reachable:
+                print(f"GraspGen: selected candidate {idx} after grasp/pre-grasp IK checks")
+                return int(idx)
+        raise ValueError("No reachable GraspGen grasp among the 10 highest-scored candidates")
 
     def _segment_object_from_language(
         self, image: Image.Image, object_name: str
@@ -498,7 +554,7 @@ class FrankaLiberoApi(ApiBase):
             dict containing:
                 - "agentview_mask": np.ndarray of shape (H, W), dtype bool
                 - "wrist_mask": np.ndarray of shape (H, W), dtype bool (None if single view)
-                - "points_3d": np.ndarray of shape (N, 3), 3D points in world frame
+                - "points_3d": np.ndarray of shape (N, 3), 3D points in robot base frame
                 - "agentview_score": float, SAM3 confidence score
                 - "wrist_score": float, SAM3 confidence score (None if single view)
         """
@@ -540,7 +596,7 @@ class FrankaLiberoApi(ApiBase):
             # Get 3D points in camera frame
             pts_camera = depth_to_pointcloud(depth, intrinsics, subsample_factor=1)
             
-            # Transform to world frame
+            # Transform to robot base frame
             pts_homogeneous = np.concatenate([pts_camera, np.ones((len(pts_camera), 1))], axis=1) # add column of ones
             pts_world = (extrinsics @ pts_homogeneous.T).T[:, :3]
             
@@ -675,6 +731,12 @@ class FrankaLiberoApi(ApiBase):
         
         assert len(grasp_sample) > 0, "No grasp candidates found"
 
+        if self.grasp_backend == "graspgen":
+            # The adapter already converted the learned hand origin to the
+            # MuJoCo TCP. Applying Contact-GraspNet's 120 mm shift here would
+            # put the fingers beyond the requested grasp.
+            return grasp_sample, grasp_scores
+
         grasp_sample_tf = (
             vtf.SE3.from_matrix(grasp_sample) @ vtf.SE3.from_translation(np.array([0, 0, 0.12]))
         ).as_matrix()
@@ -684,10 +746,10 @@ class FrankaLiberoApi(ApiBase):
         self, grasp_poses_world: np.ndarray, grasp_scores: np.ndarray, top_k: int = 15
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Parses grasp poses from the world frame into a format compatible with CuRobo.
+        Parses grasp poses from the robot base frame into a format compatible with CuRobo.
 
         Args:
-            grasp_poses_world: (N, 4, 4) array of grasp poses in world frame
+            grasp_poses_world: (N, 4, 4) array of grasp poses in robot base frame
             grasp_scores: (N,) array of grasp scores
             top_k: number of top grasp poses to return. Default is 15.
         Returns:
@@ -841,7 +903,7 @@ class FrankaLiberoApi(ApiBase):
         Args:
             object_name: Name of the object (used for mask and grasps if not provided).
             object_mask: precomputed mask (H, W) of the object.
-            grasp_poses: list of (position (3,), quaternion_wxyz (4,)) in world frame.
+            grasp_poses: list of (position (3,), quaternion_wxyz (4,)) in robot base frame.
             top_k_grasps: Number of top grasps to try (by score). Default 15.
             use_world_collision: If True, use world for collision (scene only; object ignored for grasp). Default is True.
             robot_distance_threshold: Passed when building world. Default is 0.15.
@@ -1025,7 +1087,7 @@ class FrankaLiberoApi(ApiBase):
         is planned to the target pose.
 
         Args:
-            target_pose: (position (3,), quaternion_wxyz (4,)) target pose in world frame (e.g. basket).
+            target_pose: (position (3,), quaternion_wxyz (4,)) target pose in robot base frame (e.g. basket).
             object_name: Name of the object to attach (used for world mesh name: spaces → underscores).
             object_pose: Optional (position, quat_wxyz) of object; unused for now, for API consistency. Default is None.
             object_mask: If provided, rebuild world from current observation with this mask before planning. Default is None.

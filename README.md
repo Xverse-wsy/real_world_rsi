@@ -3,6 +3,10 @@
 
 # CaP-X
 
+> 本仓库为包含A800适配修改的CAP-X版本。接手本项目请先读
+> [AGENTS.md](AGENTS.md) 和 [部署／改动说明](docs/local_changes.md)。
+> 以下保留官方项目介绍与原始使用说明。
+
 ### A Framework for Benchmarking and Improving Coding Agents for Robot Manipulation
 
 [Project Page](https://capgym.github.io/) &ensp;|&ensp; [Paper](https://arxiv.org/abs/2603.22435) 

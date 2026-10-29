@@ -47,3 +47,31 @@ wandb/
 *.ico
 *.webp
 check.md
+
+# Local runtime state and downloaded experiment artifacts.
+# Selected .setup source files are explicitly tracked; credentials stay local.
+/.setup/
+/.cache/
+/.venv*/
+/downloads/
+/run_preparations/
+/pi05_ablation/
+/wcm_pi05_monitor/
+/graspgen_log_review_*/
+/libero_*videos*/
+/libero_object_failures_wcm_*/
+/pi05_*videos*/
+/pi05_training_*evidence*/
+/cliproxy_a800_setup/*.json
+/*.mp4
+/*.tar.gz
+/*.download.json
+*.bak
+*.before_*
+*.safetensors
+*.ckpt
+*.pth
+*.pt
+*.whl
+*.so
+*.o
